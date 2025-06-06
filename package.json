@@ -2,6 +2,7 @@
   "name": "demogame",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "dependencies": {
     "@react-three/drei": "^10.1.2",
     "@react-three/fiber": "^9.1.2",
@@ -13,13 +14,15 @@
     "three": "^0.177.0"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "devDependencies": {
-    "react-scripts": "5.0.1"
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.1.0"
   },
   "browserslist": {
     "production": [

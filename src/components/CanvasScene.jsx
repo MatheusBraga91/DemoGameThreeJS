@@ -40,9 +40,38 @@ const CanvasScene = () => {
     floor.receiveShadow = true;
     scene.add(floor);
 
-    // Grid helper mais destacado
-    const gridHelper = new THREE.GridHelper(floorSize, 20, 0x555555, 0x888888);
-    scene.add(gridHelper);
+    // Criar linhas brancas para o grid
+    const gridDivisions = 20; // Mesmo número de divisões que tínhamos antes
+    const gridSize = floorSize;
+    const gridStep = gridSize / gridDivisions;
+    const gridLines = new THREE.Group();
+
+    // Criar linhas horizontais e verticais
+    for (let i = 0; i <= gridDivisions; i++) {
+      const position = (i * gridStep) - (gridSize / 2);
+      
+      // Linha horizontal
+      const horizontalLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(-gridSize/2, 0.01, position),
+          new THREE.Vector3(gridSize/2, 0.01, position)
+        ]),
+        new THREE.LineBasicMaterial({ color: 0xffffff })
+      );
+      gridLines.add(horizontalLine);
+
+      // Linha vertical
+      const verticalLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(position, 0.01, -gridSize/2),
+          new THREE.Vector3(position, 0.01, gridSize/2)
+        ]),
+        new THREE.LineBasicMaterial({ color: 0xffffff })
+      );
+      gridLines.add(verticalLine);
+    }
+
+    scene.add(gridLines);
 
     // 3. Iluminação melhorada
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -71,10 +100,11 @@ const CanvasScene = () => {
 
     // Posições em unidades do grid (cada quadrado = 2.5 unidades)
     const gridSpacing = floorSize / 20; // 2.5 unidades por quadrado
+    const halfGrid = gridSpacing / 2;   // Metade do tamanho do quadrado (1.25 unidades)
     const positions = [
-      { x: -2 * gridSpacing, z: 0 }, // Archer 2 quadrados à esquerda
-      { x: 0, z: 0 },                // Warrior no centro
-      { x: 2 * gridSpacing, z: 0 }   // Wizard 2 quadrados à direita
+      { x: -halfGrid, z: halfGrid },                    // Warrior no quadrado central
+      { x: -gridSpacing - halfGrid, z: halfGrid },      // Archer no quadrado à esquerda
+      { x: -floorSize/2 + halfGrid, z: -floorSize/2 + halfGrid }  // Wizard no canto inferior esquerdo
     ];
 
     characterPaths.forEach((path, index) => {
@@ -91,9 +121,13 @@ const CanvasScene = () => {
           const scale = targetSize / maxDimension;
           fbx.scale.set(scale, scale, scale);
 
-          // Centralizar e posicionar
-          const center = bbox.getCenter(new THREE.Vector3());
-          fbx.position.copy(positions[index]).sub(center.multiplyScalar(scale));
+          // Posicionar exatamente no centro do quadrado
+          const gridPosition = positions[index];
+          fbx.position.set(
+            gridPosition.x,
+            0,
+            gridPosition.z
+          );
           
           // Ajustar posição Y para colocar no chão
           const bottomY = bbox.min.y * scale;
@@ -109,14 +143,37 @@ const CanvasScene = () => {
           fbx.rotation.y = Math.PI;
 
           // Aplicar textura ao modelo
-          const modelName = path.split('/').pop(); // Pega o nome do arquivo
+          const modelName = path.split('/').pop();
           const texturedModel = await loadAndApplyTexture(fbx, modelName);
           
+          // Criar hitbox para o personagem
+          const hitboxGeometry = new THREE.BoxGeometry(gridSpacing, gridSpacing, gridSpacing);
+          const hitboxMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.5
+          });
+          const hitbox = new THREE.Mesh(hitboxGeometry, hitboxMaterial);
+          
+          // Posicionar a hitbox no mesmo lugar do personagem
+          hitbox.position.copy(texturedModel.position);
+          hitbox.position.y = gridSpacing / 2; // Elevar a hitbox para cobrir o personagem
+          
+          // Adicionar a hitbox à cena
+          scene.add(hitbox);
+          
+          // Armazenar referências do modelo e sua hitbox
+          charactersRef.current[index] = {
+            model: texturedModel,
+            hitbox: hitbox,
+            name: characterNames[index]
+          };
+
           scene.add(texturedModel);
-          charactersRef.current.push(texturedModel);
 
           // Atualizar câmera quando todos estiverem carregados
-          if (charactersRef.current.length === characterPaths.length) {
+          if (charactersRef.current.filter(Boolean).length === characterPaths.length) {
             camera.lookAt(0, 0, 0);
           }
         },
@@ -126,6 +183,92 @@ const CanvasScene = () => {
         }
       );
     });
+
+    // Adicionar raycaster para detecção de clique e hover
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    const characterNames = ['Warrior', 'Archer', 'Wizard'];
+    let selectedCharacter = null;
+
+    // Função para lidar com movimento do mouse
+    const onMouseMove = (event) => {
+      // Calcular posição do mouse em coordenadas normalizadas (-1 a +1)
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      // Atualizar o raycaster
+      raycaster.setFromCamera(mouse, camera);
+
+      // Verificar interseções com as hitboxes
+      const hitboxes = charactersRef.current.map(char => char?.hitbox).filter(Boolean);
+      const intersects = raycaster.intersectObjects(hitboxes);
+
+      // Resetar cor de todas as hitboxes
+      hitboxes.forEach(hitbox => {
+        if (hitbox) {
+          hitbox.material.color.set(0xff0000);
+          hitbox.material.opacity = 0.5;
+        }
+      });
+
+      // Destacar hitbox sob o mouse
+      if (intersects.length > 0) {
+        const hitHitbox = intersects[0].object;
+        hitHitbox.material.color.set(0x00ff00);
+        hitHitbox.material.opacity = 0.8;
+        document.body.style.cursor = 'pointer';
+      } else {
+        document.body.style.cursor = 'default';
+      }
+    };
+
+    // Função para lidar com cliques
+    const onMouseClick = (event) => {
+      // Calcular posição do mouse em coordenadas normalizadas (-1 a +1)
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      // Atualizar o raycaster
+      raycaster.setFromCamera(mouse, camera);
+
+      // Verificar interseções com as hitboxes
+      const hitboxes = charactersRef.current.map(char => char?.hitbox).filter(Boolean);
+      const intersects = raycaster.intersectObjects(hitboxes);
+
+      if (intersects.length > 0) {
+        const hitHitbox = intersects[0].object;
+        
+        // Encontrar o índice correto do personagem
+        const characterIndex = charactersRef.current.findIndex(
+          char => char?.hitbox === hitHitbox
+        );
+        
+        if (characterIndex !== -1) {
+          const character = charactersRef.current[characterIndex];
+          
+          // Resetar seleção anterior
+          if (selectedCharacter !== null && charactersRef.current[selectedCharacter]) {
+            charactersRef.current[selectedCharacter].hitbox.material.color.set(0xff0000);
+          }
+
+          // Atualizar seleção
+          selectedCharacter = characterIndex;
+          hitHitbox.material.color.set(0x0000ff);
+          
+          console.log(`Selected: ${character.name}`);
+        }
+      } else {
+        // Resetar seleção se clicar fora
+        if (selectedCharacter !== null && charactersRef.current[selectedCharacter]) {
+          charactersRef.current[selectedCharacter].hitbox.material.color.set(0xff0000);
+          selectedCharacter = null;
+        }
+      }
+    };
+
+    // Adicionar listeners
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('click', onMouseClick);
 
     // 6. Handle resize e animation loop
     const handleResize = () => {
@@ -138,12 +281,49 @@ const CanvasScene = () => {
     const animate = () => {
       requestAnimationFrame(animate);
       controls.update();
+
+      // Animar o movimento do wizard
+      if (charactersRef.current.length > 0 && charactersRef.current[2]?.model) {
+        const wizard = charactersRef.current[2].model;
+        const wizardHitbox = charactersRef.current[2].hitbox;
+        const time = Date.now() * 0.001;
+        const cycleDuration = 20;
+        const cycleProgress = (time % cycleDuration) / cycleDuration;
+
+        // Definir as posições do movimento ao longo das bordas
+        const positions = [
+          { x: -floorSize/2 + halfGrid, z: -floorSize/2 + halfGrid },
+          { x: floorSize/2 - halfGrid, z: -floorSize/2 + halfGrid },
+          { x: floorSize/2 - halfGrid, z: floorSize/2 - halfGrid },
+          { x: -floorSize/2 + halfGrid, z: floorSize/2 - halfGrid },
+          { x: -floorSize/2 + halfGrid, z: -floorSize/2 + halfGrid }
+        ];
+
+        const segment = Math.floor(cycleProgress * 4);
+        const segmentProgress = (cycleProgress * 4) % 1;
+        
+        const startPos = positions[segment];
+        const endPos = positions[(segment + 1) % 5];
+        
+        // Atualizar posição do modelo e da hitbox
+        wizard.position.x = startPos.x + (endPos.x - startPos.x) * segmentProgress;
+        wizard.position.z = startPos.z + (endPos.z - startPos.z) * segmentProgress;
+        wizardHitbox.position.copy(wizard.position);
+        wizardHitbox.position.y = gridSpacing / 2;
+
+        const angle = Math.atan2(endPos.x - startPos.x, endPos.z - startPos.z);
+        wizard.rotation.y = angle;
+        wizardHitbox.rotation.y = angle;
+      }
+
       renderer.render(scene, camera);
     };
     animate();
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('click', onMouseClick);
       mountRef.current?.removeChild(renderer.domElement);
     };
   }, []);
