@@ -104,7 +104,7 @@ const CanvasScene = () => {
     const positions = [
       { x: -halfGrid, z: halfGrid },                    // Warrior no quadrado central
       { x: -gridSpacing - halfGrid, z: halfGrid },      // Archer no quadrado à esquerda
-      { x: -floorSize/2 + halfGrid, z: -floorSize/2 + halfGrid }  // Wizard no canto inferior esquerdo
+      { x: halfGrid, z: halfGrid }                      // Wizard no quadrado à direita do warrior
     ];
 
     characterPaths.forEach((path, index) => {
@@ -169,7 +169,7 @@ const CanvasScene = () => {
             hitbox: hitbox,
             name: characterNames[index]
           };
-
+          
           scene.add(texturedModel);
 
           // Atualizar câmera quando todos estiverem carregados
@@ -187,58 +187,90 @@ const CanvasScene = () => {
     // Adicionar raycaster para detecção de clique e hover
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
-    const characterNames = ['Warrior', 'Archer', 'Wizard'];
+    const characterNames = ['Archer', 'Warrior', 'Wizard'];
     let selectedCharacter = null;
+    let isMoving = false;
+    let targetPosition = null;
+    let movementSpeed = 5;
+    let movementRadius = null; // Para armazenar o círculo de movimento
 
-    // Função para lidar com movimento do mouse
-    const onMouseMove = (event) => {
-      // Calcular posição do mouse em coordenadas normalizadas (-1 a +1)
-      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    // Função para converter posição do mundo para posição da grade
+    const worldToGridPosition = (worldPos) => {
+      const gridX = Math.round((worldPos.x + floorSize/2) / gridSpacing) * gridSpacing - floorSize/2 + halfGrid;
+      const gridZ = Math.round((worldPos.z + floorSize/2) / gridSpacing) * gridSpacing - floorSize/2 + halfGrid;
+      return { x: gridX, z: gridZ };
+    };
 
-      // Atualizar o raycaster
-      raycaster.setFromCamera(mouse, camera);
-
-      // Verificar interseções com as hitboxes
-      const hitboxes = charactersRef.current.map(char => char?.hitbox).filter(Boolean);
-      const intersects = raycaster.intersectObjects(hitboxes);
-
-      // Resetar cor de todas as hitboxes
-      hitboxes.forEach(hitbox => {
-        if (hitbox) {
-          hitbox.material.color.set(0xff0000);
-          hitbox.material.opacity = 0.5;
-        }
-      });
-
-      // Destacar hitbox sob o mouse
-      if (intersects.length > 0) {
-        const hitHitbox = intersects[0].object;
-        hitHitbox.material.color.set(0x00ff00);
-        hitHitbox.material.opacity = 0.8;
-        document.body.style.cursor = 'pointer';
-      } else {
-        document.body.style.cursor = 'default';
+    // Função para mover o personagem
+    const moveCharacter = (character, targetPos, deltaTime) => {
+      const currentPos = character.model.position;
+      const direction = new THREE.Vector3(
+        targetPos.x - currentPos.x,
+        0,
+        targetPos.z - currentPos.z
+      );
+      
+      const distance = direction.length();
+      
+      if (distance > 0.1) {
+        // Normalizar a direção e aplicar a velocidade
+        direction.normalize();
+        const moveDistance = Math.min(movementSpeed * deltaTime, distance);
+        
+        // Atualizar posição
+        currentPos.x += direction.x * moveDistance;
+        currentPos.z += direction.z * moveDistance;
+        
+        // Atualizar hitbox
+        character.hitbox.position.copy(currentPos);
+        character.hitbox.position.y = gridSpacing / 2;
+        
+        // Rotacionar o personagem para olhar na direção do movimento
+        character.model.rotation.y = Math.atan2(direction.x, direction.z);
+        character.hitbox.rotation.y = character.model.rotation.y;
+        
+        return true; // Ainda está se movendo
       }
+      
+      return false; // Chegou ao destino
+    };
+
+    // Função para criar o círculo de movimento
+    const createMovementRadius = (radius) => {
+      const geometry = new THREE.RingGeometry(radius - 0.1, radius, 64);
+      const material = new THREE.MeshBasicMaterial({
+        color: 0x00ff00,
+        transparent: true,
+        opacity: 0.3,
+        side: THREE.DoubleSide
+      });
+      const circle = new THREE.Mesh(geometry, material);
+      circle.rotation.x = -Math.PI / 2;
+      circle.position.y = 0.01; // Ligeiramente acima do chão
+      return circle;
+    };
+
+    // Função para verificar se uma posição está dentro do raio
+    const isWithinRadius = (startPos, targetPos, radius) => {
+      const dx = targetPos.x - startPos.x;
+      const dz = targetPos.z - startPos.z;
+      const distance = Math.sqrt(dx * dx + dz * dz);
+      return distance <= radius;
     };
 
     // Função para lidar com cliques
     const onMouseClick = (event) => {
-      // Calcular posição do mouse em coordenadas normalizadas (-1 a +1)
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
-      // Atualizar o raycaster
       raycaster.setFromCamera(mouse, camera);
 
-      // Verificar interseções com as hitboxes
+      // Primeiro, verificar se clicou em um personagem
       const hitboxes = charactersRef.current.map(char => char?.hitbox).filter(Boolean);
-      const intersects = raycaster.intersectObjects(hitboxes);
+      const characterIntersects = raycaster.intersectObjects(hitboxes);
 
-      if (intersects.length > 0) {
-        const hitHitbox = intersects[0].object;
-        
-        // Encontrar o índice correto do personagem
+      if (characterIntersects.length > 0) {
+        const hitHitbox = characterIntersects[0].object;
         const characterIndex = charactersRef.current.findIndex(
           char => char?.hitbox === hitHitbox
         );
@@ -249,20 +281,97 @@ const CanvasScene = () => {
           // Resetar seleção anterior
           if (selectedCharacter !== null && charactersRef.current[selectedCharacter]) {
             charactersRef.current[selectedCharacter].hitbox.material.color.set(0xff0000);
+            // Remover círculo de movimento anterior
+            if (movementRadius) {
+              scene.remove(movementRadius);
+              movementRadius = null;
+            }
           }
 
           // Atualizar seleção
           selectedCharacter = characterIndex;
           hitHitbox.material.color.set(0x0000ff);
           
+          // Criar e mostrar círculo de movimento
+          const radius = characterIndex === 0 ? 10 : characterIndex === 1 ? 7.5 : 5; // Archer: 10, Warrior: 7.5, Wizard: 5
+          movementRadius = createMovementRadius(radius);
+          movementRadius.position.copy(character.model.position);
+          scene.add(movementRadius);
+          
           console.log(`Selected: ${character.name}`);
+          
+          if (characterIndex === 2) {
+            isMoving = false;
+            targetPosition = null;
+          }
         }
       } else {
-        // Resetar seleção se clicar fora
-        if (selectedCharacter !== null && charactersRef.current[selectedCharacter]) {
-          charactersRef.current[selectedCharacter].hitbox.material.color.set(0xff0000);
-          selectedCharacter = null;
+        // Verificar se clicou no chão
+        const floorIntersects = raycaster.intersectObject(floor);
+        
+        if (floorIntersects.length > 0 && selectedCharacter !== null) {
+          const hitPoint = floorIntersects[0].point;
+          const character = charactersRef.current[selectedCharacter];
+          const radius = selectedCharacter === 0 ? 10 : selectedCharacter === 1 ? 7.5 : 5; // Archer: 10, Warrior: 7.5, Wizard: 5
+          
+          // Verificar se o ponto está dentro do raio de movimento
+          if (isWithinRadius(character.model.position, hitPoint, radius)) {
+            targetPosition = worldToGridPosition(hitPoint);
+            isMoving = true;
+            console.log(`Moving ${characterNames[selectedCharacter]} to position:`, targetPosition);
+          } else {
+            console.log(`Target position is outside movement radius!`);
+          }
+        } else {
+          // Resetar seleção se clicar fora
+          if (selectedCharacter !== null && charactersRef.current[selectedCharacter]) {
+            charactersRef.current[selectedCharacter].hitbox.material.color.set(0xff0000);
+            if (movementRadius) {
+              scene.remove(movementRadius);
+              movementRadius = null;
+            }
+            selectedCharacter = null;
+            isMoving = false;
+            targetPosition = null;
+          }
         }
+      }
+    };
+
+    // Função para lidar com movimento do mouse
+    const onMouseMove = (event) => {
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+
+      // Verificar interseções com as hitboxes
+      const hitboxes = charactersRef.current.map(char => char?.hitbox).filter(Boolean);
+      const intersects = raycaster.intersectObjects(hitboxes);
+
+      // Resetar cor de todas as hitboxes
+      hitboxes.forEach(hitbox => {
+        if (hitbox) {
+          // Manter a cor azul se o personagem estiver selecionado
+          const characterIndex = charactersRef.current.findIndex(char => char?.hitbox === hitbox);
+          if (characterIndex !== selectedCharacter) {
+            hitbox.material.color.set(0xff0000);
+            hitbox.material.opacity = 0.5;
+          }
+        }
+      });
+
+      // Destacar hitbox sob o mouse
+      if (intersects.length > 0) {
+        const hitHitbox = intersects[0].object;
+        const characterIndex = charactersRef.current.findIndex(char => char?.hitbox === hitHitbox);
+        if (characterIndex !== selectedCharacter) {
+          hitHitbox.material.color.set(0x00ff00);
+          hitHitbox.material.opacity = 0.8;
+        }
+        document.body.style.cursor = 'pointer';
+      } else {
+        document.body.style.cursor = 'default';
       }
     };
 
@@ -282,38 +391,18 @@ const CanvasScene = () => {
       requestAnimationFrame(animate);
       controls.update();
 
-      // Animar o movimento do wizard
-      if (charactersRef.current.length > 0 && charactersRef.current[2]?.model) {
-        const wizard = charactersRef.current[2].model;
-        const wizardHitbox = charactersRef.current[2].hitbox;
-        const time = Date.now() * 0.001;
-        const cycleDuration = 20;
-        const cycleProgress = (time % cycleDuration) / cycleDuration;
+      const deltaTime = 1/60;
 
-        // Definir as posições do movimento ao longo das bordas
-        const positions = [
-          { x: -floorSize/2 + halfGrid, z: -floorSize/2 + halfGrid },
-          { x: floorSize/2 - halfGrid, z: -floorSize/2 + halfGrid },
-          { x: floorSize/2 - halfGrid, z: floorSize/2 - halfGrid },
-          { x: -floorSize/2 + halfGrid, z: floorSize/2 - halfGrid },
-          { x: -floorSize/2 + halfGrid, z: -floorSize/2 + halfGrid }
-        ];
-
-        const segment = Math.floor(cycleProgress * 4);
-        const segmentProgress = (cycleProgress * 4) % 1;
-        
-        const startPos = positions[segment];
-        const endPos = positions[(segment + 1) % 5];
-        
-        // Atualizar posição do modelo e da hitbox
-        wizard.position.x = startPos.x + (endPos.x - startPos.x) * segmentProgress;
-        wizard.position.z = startPos.z + (endPos.z - startPos.z) * segmentProgress;
-        wizardHitbox.position.copy(wizard.position);
-        wizardHitbox.position.y = gridSpacing / 2;
-
-        const angle = Math.atan2(endPos.x - startPos.x, endPos.z - startPos.z);
-        wizard.rotation.y = angle;
-        wizardHitbox.rotation.y = angle;
+      // Mover personagem selecionado
+      if (isMoving && selectedCharacter !== null && targetPosition) {
+        const character = charactersRef.current[selectedCharacter];
+        if (character) {
+          isMoving = moveCharacter(character, targetPosition, deltaTime);
+          // Atualizar posição do círculo de movimento
+          if (movementRadius) {
+            movementRadius.position.copy(character.model.position);
+          }
+        }
       }
 
       renderer.render(scene, camera);
@@ -324,6 +413,9 @@ const CanvasScene = () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('click', onMouseClick);
+      if (movementRadius) {
+        scene.remove(movementRadius);
+      }
       mountRef.current?.removeChild(renderer.domElement);
     };
   }, []);
