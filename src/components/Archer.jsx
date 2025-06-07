@@ -1,22 +1,27 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader';
+import { useDispatch, useSelector } from 'react-redux';
+import { setSelectedCharacter, clearSelectedCharacter } from '../redux/uiSlice';
 
 console.log('Archer.jsx file loaded');
 
 const Archer = ({ scene, camera, position }) => {
-  console.log('Archer component rendered', scene, position);
+  const dispatch = useDispatch();
+  const selectedCharacter = useSelector(state => state.ui.selectedCharacter);
+  const isSelected = selectedCharacter && selectedCharacter.type === 'archer' && selectedCharacter.id === 1;
   const modelRef = useRef();
   const hitboxRef = useRef();
   const cubeRef = useRef();
   const movementRadiusRef = useRef();
-  const [selected, setSelected] = useState(false);
+  const attackAreaRef = useRef();
   const [movingTo, setMovingTo] = useState(null);
 
   // For a 20x20 grid, each square is 1 unit
   const gridSquareSize = 1;
-  const movementRadius = 7;
-  const movementSpeed = 0.1; // units per frame (tweak as needed)
+  const movementRadius = 4;
+  const attackRange = 8; // Attack range is 8 units
+  const movementSpeed = 0.03; // units per frame (tweak as needed)
 
   // Only load the model and hitbox once (when scene/camera/position changes)
   useEffect(() => {
@@ -96,10 +101,12 @@ const Archer = ({ scene, camera, position }) => {
       if (modelRef.current) scene.remove(modelRef.current);
       if (hitboxRef.current) scene.remove(hitboxRef.current);
       if (cubeRef.current) scene.remove(cubeRef.current);
+      if (movementRadiusRef.current) scene.remove(movementRadiusRef.current);
+      if (attackAreaRef.current) scene.remove(attackAreaRef.current);
     };
   }, [scene, camera, position]);
 
-  // Handle hover and selection logic (depends on selected)
+  // Handle hover and selection logic (no local selected state)
   useEffect(() => {
     if (!scene || !camera) return;
     const raycaster = new THREE.Raycaster();
@@ -111,7 +118,7 @@ const Archer = ({ scene, camera, position }) => {
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
       raycaster.setFromCamera(mouse, camera);
       const intersects = raycaster.intersectObject(hitboxRef.current);
-      if (selected) {
+      if (isSelected) {
         hitboxRef.current.material.color.set(0x00ff00); // Green if selected
       } else if (intersects.length > 0) {
         hitboxRef.current.material.color.set(0x0000ff); // Blue on hover
@@ -127,8 +134,8 @@ const Archer = ({ scene, camera, position }) => {
       raycaster.setFromCamera(mouse, camera);
       const intersects = raycaster.intersectObject(hitboxRef.current);
       if (intersects.length > 0) {
-        setSelected(true);
-      } else if (selected && modelRef.current && movementRadiusRef.current) {
+        dispatch(setSelectedCharacter({ type: 'archer', id: 1 }));
+      } else if (isSelected && modelRef.current && movementRadiusRef.current) {
         // Only handle movement if selected
         // Raycast to the floor
         const floor = scene.children.find(obj => obj.isMesh && obj.geometry && obj.geometry.type === 'PlaneGeometry');
@@ -144,14 +151,16 @@ const Archer = ({ scene, camera, position }) => {
           );
           if (dist <= movementRadius) {
             setMovingTo({ x: point.x, z: point.z });
+          } else {
+            // Clicked on floor but outside movement radius: deselect
+            dispatch(clearSelectedCharacter());
           }
+        } else {
+          // Clicked somewhere else (not on hitbox or floor): deselect
+          dispatch(clearSelectedCharacter());
         }
-        // Deselect if clicked outside movement radius or not on floor
-        // else {
-        //   setSelected(false);
-        // }
       } else {
-        setSelected(false);
+        dispatch(clearSelectedCharacter());
       }
     };
 
@@ -162,12 +171,12 @@ const Archer = ({ scene, camera, position }) => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('click', handleClick);
     };
-  }, [scene, camera, selected]);
+  }, [scene, camera, isSelected, dispatch]);
 
-  // Show/hide movement radius when selected
+  // Show/hide movement radius and attack area when selected
   useEffect(() => {
     if (!scene || !modelRef.current) return;
-    if (selected) {
+    if (isSelected) {
       // Create movement radius circle
       const geometry = new THREE.RingGeometry(movementRadius - 0.1, movementRadius, 64);
       const material = new THREE.MeshBasicMaterial({
@@ -181,10 +190,28 @@ const Archer = ({ scene, camera, position }) => {
       circle.position.set(modelRef.current.position.x, 0.01, modelRef.current.position.z);
       movementRadiusRef.current = circle;
       scene.add(circle);
+
+      // Create attack area (red ring around movement radius)
+      const attackGeometry = new THREE.RingGeometry(movementRadius, attackRange, 64);
+      const attackMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+        transparent: true,
+        opacity: 0.25,
+        side: THREE.DoubleSide
+      });
+      const attackArea = new THREE.Mesh(attackGeometry, attackMaterial);
+      attackArea.rotation.x = -Math.PI / 2;
+      attackArea.position.set(modelRef.current.position.x, 0.02, modelRef.current.position.z);
+      attackAreaRef.current = attackArea;
+      scene.add(attackArea);
     } else {
       if (movementRadiusRef.current) {
         scene.remove(movementRadiusRef.current);
         movementRadiusRef.current = null;
+      }
+      if (attackAreaRef.current) {
+        scene.remove(attackAreaRef.current);
+        attackAreaRef.current = null;
       }
     }
     // Clean up on unmount
@@ -193,8 +220,12 @@ const Archer = ({ scene, camera, position }) => {
         scene.remove(movementRadiusRef.current);
         movementRadiusRef.current = null;
       }
+      if (attackAreaRef.current) {
+        scene.remove(attackAreaRef.current);
+        attackAreaRef.current = null;
+      }
     };
-  }, [scene, selected]);
+  }, [scene, isSelected]);
 
   // Animate movement
   useEffect(() => {

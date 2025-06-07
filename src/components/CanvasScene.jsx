@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import Archer from './Archer'; // Import your Archer component
+import Archer from './Archer';
+import Goblin from './Goblin';
 
 const GameScene = () => {
   const mountRef = useRef(null);
@@ -114,7 +115,11 @@ const GameScene = () => {
             camera={cameraRef.current}
             position={{ x: 0, z: 0 }} // Center of the floor
           />
-          {/* Add more characters as needed */}
+          <Goblin
+            scene={sceneRef.current}
+            camera={cameraRef.current}
+            position={{ x: 4, z: 4 }}
+          />
         </>
       )}
     </div>
