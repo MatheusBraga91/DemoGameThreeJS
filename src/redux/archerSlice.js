@@ -15,6 +15,9 @@ const initialState = {
   statusEffects: [],
   isAlive: true,
   hero: true,
+  selected: false,
+  isAttacker: false,
+  isDefender: false,
   // inventory: [],
   // equipment: {},
 };
@@ -29,9 +32,20 @@ const archerSlice = createSlice({
     setPosition(state, action) {
       state.position = action.payload;
     },
+    setSelected(state, action) {
+      state.selected = action.payload;
+    },
+    setAttacker(state, action) {
+      state.isAttacker = action.payload;
+      state.isDefender = !action.payload;
+    },
+    setDefender(state, action) {
+      state.isDefender = action.payload;
+      state.isAttacker = !action.payload;
+    },
     // Add more reducers as needed
   },
 });
 
-export const { setHealth, setPosition } = archerSlice.actions;
+export const { setHealth, setPosition, setSelected, setAttacker, setDefender } = archerSlice.actions;
 export default archerSlice.reducer;

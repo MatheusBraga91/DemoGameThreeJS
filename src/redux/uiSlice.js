@@ -2,6 +2,7 @@ import { createSlice } from '@reduxjs/toolkit';
 
 const initialState = {
   selectedCharacter: null, // e.g., { type: 'archer', id: 1 }
+  attackOptionsOpen: false,
 };
 
 const uiSlice = createSlice({
@@ -14,8 +15,14 @@ const uiSlice = createSlice({
     clearSelectedCharacter(state) {
       state.selectedCharacter = null;
     },
+    openAttackOptions(state) {
+      state.attackOptionsOpen = true;
+    },
+    closeAttackOptions(state) {
+      state.attackOptionsOpen = false;
+    },
   },
 });
 
-export const { setSelectedCharacter, clearSelectedCharacter } = uiSlice.actions;
+export const { setSelectedCharacter, clearSelectedCharacter, openAttackOptions, closeAttackOptions } = uiSlice.actions;
 export default uiSlice.reducer; 

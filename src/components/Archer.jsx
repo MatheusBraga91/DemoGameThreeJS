@@ -2,24 +2,30 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader';
 import { useDispatch, useSelector } from 'react-redux';
-import { setSelectedCharacter, clearSelectedCharacter } from '../redux/uiSlice';
+import { setSelectedCharacter, clearSelectedCharacter, openAttackOptions, closeAttackOptions } from '../redux/uiSlice';
+import { setSelected } from '../redux/archerSlice';
+import AttackOptions from './AttackOptions';
+import { setIsInMovementRange } from '../redux/goblinSlice';
+import { setCharacterSelected } from '../redux/sceneState';
 
 console.log('Archer.jsx file loaded');
 
 const Archer = ({ scene, camera, position }) => {
   const dispatch = useDispatch();
   const selectedCharacter = useSelector(state => state.ui.selectedCharacter);
-  const isSelected = selectedCharacter && selectedCharacter.type === 'archer' && selectedCharacter.id === 1;
+  const isSelected = useSelector(state => state.archer.selected);
+  const attackOptionsOpen = useSelector(state => state.ui.attackOptionsOpen);
   const modelRef = useRef();
   const hitboxRef = useRef();
   const cubeRef = useRef();
   const movementRadiusRef = useRef();
   const attackAreaRef = useRef();
   const [movingTo, setMovingTo] = useState(null);
+  const [attackOptionsPosition, setAttackOptionsPosition] = useState(null);
 
   // For a 20x20 grid, each square is 1 unit
   const gridSquareSize = 1;
-  const movementRadius = 4;
+  const movementRadius = 5;
   const attackRange = 8; // Attack range is 8 units
   const movementSpeed = 0.03; // units per frame (tweak as needed)
 
@@ -77,7 +83,7 @@ const Archer = ({ scene, camera, position }) => {
         // Add a fallback cube so we can see if the code runs at all
         const cube = new THREE.Mesh(
           new THREE.BoxGeometry(1, 1, 1),
-          new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+          new THREE.MeshBasicMaterial({ color: 0x0000ff })
         );
         cube.position.set(position.x, 0.5, position.z);
         cubeRef.current = cube;
@@ -128,39 +134,111 @@ const Archer = ({ scene, camera, position }) => {
     };
 
     const handleClick = (event) => {
-      if (!hitboxRef.current) return;
+      if (attackOptionsOpen) return; // Block all scene clicks if UI is open
+      if (!scene || !camera) return;
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
       raycaster.setFromCamera(mouse, camera);
-      const intersects = raycaster.intersectObject(hitboxRef.current);
-      if (intersects.length > 0) {
-        dispatch(setSelectedCharacter({ type: 'archer', id: 1 }));
-      } else if (isSelected && modelRef.current && movementRadiusRef.current) {
-        // Only handle movement if selected
-        // Raycast to the floor
-        const floor = scene.children.find(obj => obj.isMesh && obj.geometry && obj.geometry.type === 'PlaneGeometry');
-        if (!floor) return;
-        const floorIntersects = raycaster.intersectObject(floor);
-        if (floorIntersects.length > 0) {
-          const point = floorIntersects[0].point;
-          // Check if within movement radius
+
+      // Get ALL intersected objects (order matters - first in array is closest)
+      const intersects = raycaster.intersectObjects(scene.children, true);
+
+      // 1. Always check hitbox first (only way to deselect)
+      if (hitboxRef.current) {
+        const hitboxIntersects = raycaster.intersectObject(hitboxRef.current);
+        if (hitboxIntersects.length > 0) {
+          if (isSelected) {
+            // Clicked hitbox while selected - deselect
+            console.log('Deselecting archer: clicked on hitbox while selected');
+            dispatch(clearSelectedCharacter());
+            dispatch(setSelected(false));
+            dispatch(setCharacterSelected(false));
+          } else {
+            // Check if any character is already selected
+            if (selectedCharacter) {
+              console.log('Cannot select archer: another character is already selected');
+              return;
+            }
+            // Clicked hitbox while not selected - select
+            console.log('Selecting archer: clicked on hitbox while not selected');
+            dispatch(setSelectedCharacter({ type: 'archer', id: 1 }));
+            dispatch(setSelected(true));
+            dispatch(setCharacterSelected(true));
+          }
+          return;
+        }
+      }
+
+      // 2. If archer is selected, handle goblin click for attack
+      if (isSelected) {
+        // Find goblin mesh (red box)
+        const goblinIntersect = intersects.find(intersect =>
+          intersect.object.isMesh &&
+          intersect.object.geometry &&
+          intersect.object.geometry.type === 'BoxGeometry' &&
+          intersect.object.material.color.getHex() === 0x0000ff
+        );
+        if (goblinIntersect && modelRef.current) {
+          const goblinPosition = goblinIntersect.object.position;
+          const archerPosition = modelRef.current.position;
+          const dist = Math.sqrt(
+            Math.pow(archerPosition.x - goblinPosition.x, 2) +
+            Math.pow(archerPosition.z - goblinPosition.z, 2)
+          );
+          const inMove = dist <= movementRadius;
+          const inAttack = dist > movementRadius && dist <= attackRange;
+          console.log('Archer click on goblin:', { dist, movementRadius, attackRange, inMove, inAttack });
+          dispatch(setIsInMovementRange(inMove));
+
+          // If in movement range, prevent goblin selection and return
+          if (inMove) {
+            console.log('Cannot select goblin: in movement range');
+            return;
+          }
+
+          // If in attack range, show attack options
+          if (inAttack) {
+            console.log('Showing attack options UI');
+            setAttackOptionsPosition({ x: event.clientX, y: event.clientY });
+            dispatch(openAttackOptions());
+            return;
+          }
+        }
+
+        // Then find the floor intersect (if any)
+        const floorIntersect = intersects.find(intersect =>
+          intersect.object.isMesh &&
+          intersect.object.geometry?.type === 'PlaneGeometry'
+        );
+
+        if (floorIntersect && modelRef.current) {
+          const point = floorIntersect.point;
           const center = modelRef.current.position;
           const dist = Math.sqrt(
             Math.pow(point.x - center.x, 2) +
             Math.pow(point.z - center.z, 2)
           );
+
+          // If clicked inside movement radius (whether directly on floor or through UI)
           if (dist <= movementRadius) {
+            console.log('Moving archer: clicked inside movement radius');
             setMovingTo({ x: point.x, z: point.z });
-          } else {
-            // Clicked on floor but outside movement radius: deselect
-            dispatch(clearSelectedCharacter());
+            return;
           }
-        } else {
-          // Clicked somewhere else (not on hitbox or floor): deselect
-          dispatch(clearSelectedCharacter());
+
+          // If clicked inside attack radius but outside movement radius, do nothing (prevent deselection)
+          if (dist > movementRadius && dist <= attackRange) {
+            console.log('Clicked inside attack radius - maintaining selection');
+            return;
+          }
         }
-      } else {
+        // If not goblin in attack range or movement, deselect
+        console.log('Deselecting archer: clicked outside movement and attack radius');
         dispatch(clearSelectedCharacter());
+        dispatch(setSelected(false));
+        dispatch(setCharacterSelected(false));
       }
     };
 
@@ -171,7 +249,7 @@ const Archer = ({ scene, camera, position }) => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('click', handleClick);
     };
-  }, [scene, camera, isSelected, dispatch]);
+  }, [scene, camera, isSelected, dispatch, attackOptionsOpen]);
 
   // Show/hide movement radius and attack area when selected
   useEffect(() => {
@@ -183,7 +261,8 @@ const Archer = ({ scene, camera, position }) => {
         color: 0x00ff00,
         transparent: true,
         opacity: 0.3,
-        side: THREE.DoubleSide
+        side: THREE.DoubleSide,
+        depthTest: false // This makes it render on top of other objects
       });
       const circle = new THREE.Mesh(geometry, material);
       circle.rotation.x = -Math.PI / 2;
@@ -255,6 +334,11 @@ const Archer = ({ scene, camera, position }) => {
           movementRadiusRef.current.position.x = current.x;
           movementRadiusRef.current.position.z = current.z;
         }
+        // Move attack area too
+        if (attackAreaRef.current) {
+          attackAreaRef.current.position.x = current.x;
+          attackAreaRef.current.position.z = current.z;
+        }
         frameId = requestAnimationFrame(animateMove);
       } else {
         // Snap to target
@@ -268,6 +352,10 @@ const Archer = ({ scene, camera, position }) => {
           movementRadiusRef.current.position.x = current.x;
           movementRadiusRef.current.position.z = current.z;
         }
+        if (attackAreaRef.current) {
+          attackAreaRef.current.position.x = current.x;
+          attackAreaRef.current.position.z = current.z;
+        }
         setMovingTo(null);
       }
     };
@@ -277,7 +365,7 @@ const Archer = ({ scene, camera, position }) => {
     };
   }, [movingTo]);
 
-  return null;
+  return attackOptionsPosition ? <AttackOptions position={attackOptionsPosition} onClose={() => { setAttackOptionsPosition(null); dispatch(closeAttackOptions()); }} /> : null;
 };
 
 export default Archer; 

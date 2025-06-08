@@ -34,7 +34,7 @@ const GameScene = () => {
     const floorGeometry = new THREE.PlaneGeometry(floorSize, floorSize);
     const floorMaterial = new THREE.MeshStandardMaterial({
       color: 0x3CB371,
-      roughness: 0.8,
+        roughness: 0.8,
       metalness: 0.1
     });
 
